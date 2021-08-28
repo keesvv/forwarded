@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -15,24 +16,53 @@ type ConnOptions struct {
 	RemoteAddr *net.TCPAddr
 }
 
+func readBytes(conn *net.TCPConn) ([]byte, error) {
+	b := make([]byte, 1024)
+	_, err := conn.Read(b)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return bytes.TrimRight(b, "\x00"), nil
+}
+
+func proxyPackets(lconn *net.TCPConn, rconn *net.TCPConn) {
+	for {
+		b, err := readBytes(lconn)
+
+		if err != nil {
+			if err == io.EOF {
+				fmt.Printf(
+					"Client %s disconnected\n",
+					lconn.RemoteAddr().String(),
+				)
+
+				return
+			}
+
+			panic(err)
+		}
+
+		_, err = rconn.Write(b)
+
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
 func handleConn(lconn *net.TCPConn, opts *ConnOptions) {
+	// Dial the remote host
 	rconn, err := net.DialTCP("tcp", nil, opts.RemoteAddr)
 
 	if err != nil {
 		panic(err)
 	}
 
-	for {
-		b := make([]byte, 1024)
-		_, err := rconn.Read(b)
-
-		if err != nil {
-			panic(err)
-		}
-
-		b = bytes.TrimRight(b, "\x00")
-		fmt.Println(b)
-	}
+	// Proxy packets between both connections
+	go proxyPackets(lconn, rconn)
+	go proxyPackets(rconn, lconn)
 }
 
 func parseConnOptions() *ConnOptions {
